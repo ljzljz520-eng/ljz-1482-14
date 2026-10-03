@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 20% 20%, rgba(22, 93, 255, 0.06), transparent 26%),
+    radial-gradient(circle at 80% 10%, rgba(255, 125, 0, 0.08), transparent 22%),
+    #f8fafc;
+  color: #0f172a;
+}
+
+* {
+  scroll-behavior: smooth;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(120deg, #165dff, #ff7d00);
+  border-radius: 999px;
+}
+
+::selection {
+  background: rgba(22, 93, 255, 0.2);
+}
