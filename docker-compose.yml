@@ -1,13 +1,65 @@
-version: "3.9"
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: av-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: audiovisual
+      POSTGRES_PASSWORD: audiovisual
+      POSTGRES_DB: audiovisual
+    volumes:
+      - av-pgdata:/var/lib/postgresql/data
+    networks:
+      - av-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audiovisual -d audiovisual"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: av-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://audiovisual:audiovisual@db:5432/audiovisual?schema=public
+      STORAGE_DIR: /data/storage
+      MAX_UPLOAD_BYTES: "524288000"
+      MAX_REMOTE_BYTES: "52428800"
+      REMOTE_TIMEOUT_MS: "15000"
+      SYNC_PROBE_MS: "1200"
+      REMOTE_ALLOWED_HOSTS: "images.unsplash.com,commondatastorage.googleapis.com"
+      WORKER_ENABLED: "true"
+      FFMPEG_BIN: ffmpeg
+      FFPROBE_BIN: ffprobe
+      LOG_LEVEL: info
+      PORT: "8000"
+      HOST: "0.0.0.0"
+    volumes:
+      - av-storage:/data/storage
+    ports:
+      - "8000:8000"
+    networks:
+      - av-net
+
   frontend:
     build: ./frontend
-    container_name: park-frontend
+    container_name: av-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
     ports:
       - "3000:80"
-    restart: unless-stopped
     networks:
-      - park-net
+      - av-net
+
+volumes:
+  av-pgdata:
+  av-storage:
+
 networks:
-  park-net:
+  av-net:
     driver: bridge

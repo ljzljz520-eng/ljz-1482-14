@@ -1,0 +1,169 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 项目与授权：内容去重只在字节层共享，授权与项目归属绝不随去重共享。
+// ---------------------------------------------------------------------------
+model Project {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  name        String
+  quotaBytes  BigInt     @default(5368709120) // 项目逻辑配额 5GiB
+  createdAt   DateTime   @default(now())
+  tokens      ApiToken[]
+  assets      Asset[]
+  refs        BlobReference[]
+}
+
+model ApiToken {
+  id        String   @id @default(cuid())
+  projectId String
+  token     String   @unique
+  label     String
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// 内容寻址字节：同一 sha256 全局只存一份；blob 本身不携带任何项目归属。
+// ---------------------------------------------------------------------------
+model BlobObject {
+  id          String          @id @default(cuid())
+  sha256      String          @unique
+  size        BigInt
+  mimeType    String
+  refCount    Int             @default(0) // 冗余计数，以 BlobReference 为准做对账
+  createdAt   DateTime        @default(now())
+  assets      Asset[]         @relation("SourceBlob")
+  derivatives Derivative[]
+  refs        BlobReference[]
+}
+
+model Asset {
+  id            String       @id @default(cuid())
+  projectId     String
+  sourceBlobId  String
+  uploadSessionId String?    @unique // 完成请求幂等：重试返回同一素材，绝不创建重复素材
+  filename      String
+  kind          String       // video | audio | image
+  mimeType      String
+  size          BigInt
+  sha256        String
+  width         Int?
+  height        Int?
+  durationMs    Int?
+  hasVideo      Boolean      @default(false)
+  hasAudio      Boolean      @default(false)
+  // RECEIVED（原件已收）→ PREVIEWABLE（可预览）→ READY（完整可用）；任意阶段可 FAILED
+  status        String       @default("RECEIVED")
+  errorCode     String?
+  errorMessage  String?
+  probeMode     String?      // sync | async：记录本次转码走同步探测还是异步探测
+  probeMs       Int?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  project       Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceBlob    BlobObject   @relation("SourceBlob", fields: [sourceBlobId], references: [id])
+  derivatives   Derivative[]
+  session       UploadSession?
+  jobs          Job[]
+
+  @@index([projectId, status, createdAt])
+  @@index([projectId, sha256])
+}
+
+model Derivative {
+  id          String   @id @default(cuid())
+  assetId     String
+  blobId      String
+  kind        String   // video-preview | audio-preview | thumbnail | waveform
+  mimeType    String
+  width       Int?
+  height      Int?
+  size        BigInt
+  createdAt   DateTime @default(now())
+  asset       Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  blob        BlobObject @relation(fields: [blobId], references: [id])
+
+  @@unique([assetId, kind])
+  @@index([assetId])
+}
+
+// 引用关系：blob ↔ project/asset/derivative，按项目鉴权，GC 据此回收孤儿字节
+model BlobReference {
+  id          String   @id @default(cuid())
+  blobId      String
+  projectId   String
+  assetId     String?
+  derivativeId String?
+  kind        String   // source | derivative
+  createdAt   DateTime @default(now())
+  blob        BlobObject @relation(fields: [blobId], references: [id])
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([blobId, projectId, kind, assetId, derivativeId])
+}
+
+// ---------------------------------------------------------------------------
+// 分片上传：以「对象身份（uploadId）+ 块范围（index/offset）+ 校验值（sha256）」恢复
+// ---------------------------------------------------------------------------
+model UploadSession {
+  id          String   @id @default(cuid())
+  projectId   String
+  filename    String
+  totalSize   BigInt
+  chunkSize   Int
+  totalChunks Int
+  sha256      String?
+  status      String   @default("OPEN") // OPEN | COMPLETED | ABORTED
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+  assetId     String?  @unique
+  asset       Asset?   @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  chunks      UploadChunk[]
+}
+
+model UploadChunk {
+  id          String   @id @default(cuid())
+  uploadId    String
+  index       Int
+  offset      BigInt
+  size        BigInt
+  sha256      String
+  receivedAt  DateTime @default(now())
+  session     UploadSession @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@unique([uploadId, index])
+}
+
+// ---------------------------------------------------------------------------
+// 转码任务：同步探测与异步探测共用同一状态机与同一张任务表
+// ---------------------------------------------------------------------------
+model Job {
+  id          String    @id @default(cuid())
+  assetId     String?
+  type        String    // probe-transcode
+  status      String    @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | CANCELLED
+  probeMode   String    @default("async")
+  progress    Int       @default(0)
+  attempt     Int       @default(0)
+  lastError   String?
+  result      Json?
+  queuedAt    DateTime  @default(now())
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  lockedBy    String?
+  lockedUntil DateTime?
+  asset       Asset?    @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([status, queuedAt])
+  @@index([assetId])
+}

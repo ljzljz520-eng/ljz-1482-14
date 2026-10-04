@@ -1,9 +1,8 @@
-node_modules
-npm-debug.log
-yarn.lock
-pnpm-lock.yaml
-frontend/dist
-.git
-.vercel
-tmp
-.cache
+**/node_modules
+**/dist
+**/.git
+**/.tools
+**/coverage
+**/*.log
+backend/.env
+backend/tests
