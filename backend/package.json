@@ -1,0 +1,40 @@
+{
+  "name": "park-media-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "云溪公园 AudioVisual 素材服务：分片上传 / 远程抓取 / 转码探测 / 素材库",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "prisma:push": "prisma db push",
+    "prisma:generate": "prisma generate",
+    "seed": "tsx prisma/seed.ts",
+    "test": "vitest run"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.19.1",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "ffprobe-static": "^3.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "jsonwebtoken": "^9.0.2",
+    "undici": "^6.19.8",
+    "winston": "^3.14.2",
+    "zod": "^3.23.8",
+    "prisma": "^5.19.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.1"
+  }
+}

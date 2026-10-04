@@ -9,3 +9,10 @@ backend/dist
 **/.DS_Store
 **/coverage
 **/.turbo
+backend/.local
+backend/*.log
+data/
+*.db
+*.db-journal
+backend/data
+.env

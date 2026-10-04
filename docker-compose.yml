@@ -1,13 +1,82 @@
 version: "3.9"
+
 services:
+  db:
+    image: mysql:8.0
+    container_name: park-db
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: park_media
+      MYSQL_USER: park
+      MYSQL_PASSWORD: park
+    volumes:
+      - park_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - park-net
+
+  fixtures:
+    # 受限下载器的内部测试源：仅挂在 compose 内网，不对宿主机暴露。
+    # 包含：允许的正常媒体 / 合法跳转 / 跳内网的恶意跳转 / 超大文件 / 内网秘密
+    build: ./fixtures
+    container_name: park-fixtures
+    environment:
+      PORT: "9000"
+      HOST_HEADER: fixtures
+    networks:
+      - park-net
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: park-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      fixtures:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      DATABASE_URL: mysql://park:park@db:3306/park_media
+      JWT_SECRET: park-media-secret-please-change-in-prod
+      STORAGE_ROOT: /app/data
+      MAX_ASSET_BYTES: "524288000"
+      MAX_REMOTE_BYTES: "209715200"
+      REMOTE_MAX_REDIRECTS: "3"
+      # 远程抓取白名单：仅内网 fixtures 演示源。生产替换为真实素材分发域名。
+      REMOTE_ALLOW_HOSTS: fixtures,fixtures.local
+      REMOTE_FETCH_TIMEOUT_MS: "30000"
+      UPLOAD_SESSION_TTL_HOURS: "24"
+      TRANSCODE_CONCURRENCY: "2"
+    volumes:
+      - park_media_data:/app/data
+    ports:
+      - "8080:8080"
+    networks:
+      - park-net
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     container_name: park-frontend
+    depends_on:
+      - backend
     ports:
       - "3000:80"
-    restart: unless-stopped
     networks:
       - park-net
+    restart: unless-stopped
+
+volumes:
+  park_db_data:
+  park_media_data:
+
 networks:
   park-net:
     driver: bridge

@@ -1,0 +1,221 @@
+// AudioVisual 素材服务数据模型
+// 生产环境使用 MySQL；模型设计保持 provider 中立，本地可用 SQLite 做真实端到端验证。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int              @id @default(autoincrement())
+  username     String           @unique
+  passwordHash String           @map("password_hash")
+  displayName  String           @map("display_name")
+  role         String           @default("member")
+  memberships  ProjectMember[]
+  uploadedAssets Asset[]
+  fetchJobs    RemoteFetch[]
+  sessions     UploadSession[]
+  references   AssetReference[]
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+model Project {
+  id         Int              @id @default(autoincrement())
+  key        String           @unique
+  name       String
+  members    ProjectMember[]
+  assets     Asset[]
+  references AssetReference[]
+  createdAt  DateTime         @default(now()) @map("created_at")
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  projectId Int      @map("project_id")
+  role      String   @default("editor") // owner | editor | viewer
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@map("project_members")
+}
+
+/// 物理字节对象：按 sha256 全局去重，refCount 记录引用数。
+/// 字节可复用，但 Asset 上的项目归属/授权独立，绝不随去重共享。
+model BlobObject {
+  id          Int                @id @default(autoincrement())
+  sha256      String             @unique
+  sizeBytes   Int                @map("size_bytes")
+  mimeType    String             @map("mime_type")
+  storagePath String             @map("storage_path")
+  refCount    Int                @default(0) @map("ref_count")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  assets      Asset[]            @relation("OriginalBlob")
+  renditions  AssetRendition[]
+
+  @@map("blob_objects")
+}
+
+model Asset {
+  id             Int               @id @default(autoincrement())
+  projectId      Int               @map("project_id")
+  uploaderId     Int               @map("uploader_id")
+  originalBlobId Int?              @map("original_blob_id")
+  filename       String
+  /// video | audio | image
+  mediaType      String            @map("media_type")
+  /// received=原件已收 previewable=可预览 ready=完整可用 failed=失败
+  status         String            @default("received")
+  /// queued | probing | transcoding | complete | failed
+  stage          String            @default("queued")
+  progress       Int               @default(0)
+  probeMode      String?           @map("probe_mode") // sync | async
+  hasAudio       Boolean?          @map("has_audio")
+  durationMs     Int?              @map("duration_ms")
+  width          Int?
+  height         Int?
+  sizeBytes      Int               @map("size_bytes")
+  source         String            @default("upload") // upload | remote
+  sourceUrl      String?           @map("source_url")
+  errorCode      String?           @map("error_code")
+  errorMessage   String?           @map("error_message")
+  /// 作业代际：删除/重建任务时 +1，旧 worker 在提交点检查，过期结果一律丢弃
+  jobGeneration  Int               @default(0) @map("job_generation")
+  uploadSessionId Int?             @map("upload_session_id") @unique
+  deletedAt      DateTime?         @map("deleted_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  project        Project           @relation(fields: [projectId], references: [id])
+  uploader       User              @relation(fields: [uploaderId], references: [id])
+  originalBlob   BlobObject?       @relation("OriginalBlob", fields: [originalBlobId], references: [id])
+  session        UploadSession?    @relation(fields: [uploadSessionId], references: [id])
+  renditions     AssetRendition[]
+  references     AssetReference[]
+  fetchJob       RemoteFetch?
+
+  @@index([projectId, status])
+  @@index([projectId, deletedAt])
+  @@map("assets")
+}
+
+model AssetRendition {
+  id         Int       @id @default(autoincrement())
+  assetId    Int       @map("asset_id")
+  /// preview=派生预览(480p/128k/缩略) cover=封面 poster
+  kind       String
+  status     String    @default("pending") // pending | ready | failed
+  mimeType   String?   @map("mime_type")
+  blobId     Int?      @map("blob_id")
+  width      Int?
+  height     Int?
+  durationMs Int?      @map("duration_ms")
+  sizeBytes  Int?      @map("size_bytes")
+  errorCode  String?   @map("error_code")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  asset      Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  blob       BlobObject? @relation(fields: [blobId], references: [id])
+
+  @@unique([assetId, kind])
+  @@index([assetId])
+  @@map("asset_renditions")
+}
+
+model UploadSession {
+  id           Int           @id @default(autoincrement())
+  projectId    Int           @map("project_id")
+  uploaderId   Int           @map("uploader_id")
+  clientToken  String        @unique @map("client_token")
+  filename     String
+  declaredSize Int           @map("declared_size")
+  chunkSize    Int           @map("chunk_size")
+  totalChunks  Int           @map("total_chunks")
+  sha256Expected String?     @map("sha256_expected")
+  /// active | completed | aborted | expired
+  status       String        @default("active")
+  bytesReceived Int          @default(0) @map("bytes_received")
+  assetId      Int?          @unique @map("asset_id")
+  expiresAt    DateTime      @map("expires_at")
+  completedAt  DateTime?     @map("completed_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  uploader     User          @relation(fields: [uploaderId], references: [id])
+  chunks       UploadChunk[]
+  asset        Asset?
+
+  @@index([projectId, status])
+  @@index([status, expiresAt])
+  @@map("upload_sessions")
+}
+
+model UploadChunk {
+  id        Int      @id @default(autoincrement())
+  sessionId Int      @map("session_id")
+  index     Int
+  offset    Int
+  size      Int
+  sha256    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session   UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, index])
+  @@index([sessionId])
+  @@map("upload_chunks")
+}
+
+model RemoteFetch {
+  id           Int       @id @default(autoincrement())
+  projectId    Int       @map("project_id")
+  requesterId  Int       @map("requester_id")
+  url          String    @db.Text
+  status       String    // pending | downloading | completed | rejected | failed
+  reasonCode   String?   @map("reason_code")
+  resolvedIp   String?   @map("resolved_ip")
+  redirects    Int       @default(0)
+  httpStatus   Int?      @map("http_status")
+  contentType  String?   @map("content_type")
+  sizeBytes    Int?      @map("size_bytes")
+  assetId      Int?      @unique @map("asset_id")
+  errorMessage String?   @map("error_message") @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  completedAt  DateTime? @map("completed_at")
+
+  requester    User      @relation(fields: [requesterId], references: [id])
+  asset        Asset?    @relation(fields: [assetId], references: [id])
+
+  @@index([projectId, createdAt])
+  @@map("remote_fetches")
+}
+
+/// 素材引用关系：场景/时间轴/文章等对素材的引用，删除素材时可定位影响面。
+model AssetReference {
+  id        Int      @id @default(autoincrement())
+  projectId Int      @map("project_id")
+  assetId   Int      @map("asset_id")
+  refType   String   @map("ref_type") // scene | timeline | article
+  refKey    String   @map("ref_key")
+  label     String
+  createdBy Int      @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  creator   User     @relation(fields: [createdBy], references: [id])
+
+  @@unique([projectId, assetId, refType, refKey])
+  @@index([assetId])
+  @@map("asset_references")
+}
